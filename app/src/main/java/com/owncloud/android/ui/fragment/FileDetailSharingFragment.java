@@ -34,11 +34,13 @@ import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.LinearLayout;
 
+import com.nextcloud.android.common.ui.theme.utils.ColorRole;
 import com.nextcloud.client.account.User;
 import com.nextcloud.client.account.UserAccountManager;
 import com.nextcloud.client.database.entity.FileEntity;
 import com.nextcloud.client.di.Injectable;
 import com.nextcloud.client.network.ClientFactory;
+import com.nextcloud.client.utils.IntentUtil;
 import com.nextcloud.utils.extensions.BundleExtensionsKt;
 import com.nextcloud.utils.extensions.FileExtensionsKt;
 import com.nextcloud.utils.extensions.OCShareExtensionsKt;
@@ -292,8 +294,12 @@ public class FileDetailSharingFragment extends Fragment implements ShareeListAda
             (SearchManager) fileActivity.getSystemService(Context.SEARCH_SERVICE),
             binding.searchView,
             fileActivity.getComponentName());
-        viewThemeUtils.androidx.themeToolbarSearchView(binding.searchView);
+        viewThemeUtils.material.themeSearchCardView(binding.searchCardWrapper);
+        viewThemeUtils.files.themeContentSearchView(binding.searchView);
+        viewThemeUtils.platform.colorImageView(binding.searchViewIcon, ColorRole.ON_SURFACE_VARIANT);
+        viewThemeUtils.platform.colorImageView(binding.pickContactEmailBtn, ColorRole.ON_SURFACE_VARIANT);
 
+        viewThemeUtils.material.colorMaterialButtonPrimaryBorderless(binding.sharesListInternalShowAll);
         viewThemeUtils.material.colorMaterialTextButton(binding.sharesListInternalShowAll);
         binding.sharesListInternalShowAll.setOnClickListener(view -> {
             internalShareeListAdapter.toggleShowAll();
@@ -301,6 +307,9 @@ public class FileDetailSharingFragment extends Fragment implements ShareeListAda
             binding.sharesListInternalShowAll.setText(textRes);
         });
 
+        viewThemeUtils.material.colorMaterialButtonPrimaryOutlined(binding.createLink);
+
+        viewThemeUtils.material.colorMaterialButtonPrimaryBorderless(binding.sharesListExternalShowAll);
         viewThemeUtils.material.colorMaterialTextButton(binding.sharesListExternalShowAll);
         binding.sharesListExternalShowAll.setOnClickListener(view -> {
             externalShareeListAdapter.toggleShowAll();
@@ -342,6 +351,14 @@ public class FileDetailSharingFragment extends Fragment implements ShareeListAda
         }
 
         checkShareViaUser();
+
+        if (file.isFolder()) {
+            binding.sendCopyBtn.setVisibility(View.GONE);
+        }
+            binding.sendCopyBtn.setOnClickListener(v ->
+                                                       startActivity(Intent.createChooser(IntentUtil.createSendIntent(requireContext(), file), 
+                                                                                          requireContext().getString(R.string.activity_chooser_send_file_title)))
+                                                  );
     }
 
     private void checkShareViaUser() {
