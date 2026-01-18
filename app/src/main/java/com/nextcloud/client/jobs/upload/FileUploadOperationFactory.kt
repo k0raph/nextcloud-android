@@ -1,7 +1,7 @@
 /*
  * Nextcloud - Android Client
  *
- * SPDX-FileCopyrightText: 2025 Nextcloud GmbH
+ * SPDX-FileCopyrightText: 2026 Raphael Vieira raphaelecv.projects@gmail.com
  * SPDX-License-Identifier: AGPL-3.0-or-later OR GPL-2.0-only
  */
 
@@ -15,6 +15,7 @@ import com.owncloud.android.datamodel.FileDataStorageManager
 import com.owncloud.android.datamodel.UploadsStorageManager
 import com.owncloud.android.db.OCUpload
 import com.owncloud.android.operations.UploadFileOperation
+import javax.inject.Inject
 
 interface FileUploadOperationFactory {
     fun create(
@@ -24,7 +25,7 @@ interface FileUploadOperationFactory {
     ): UploadFileOperation
 }
 
-class FileUploadOperationFactoryImpl(
+class FileUploadOperationFactoryImpl @Inject constructor(
     private val uploadsStorageManager: UploadsStorageManager,
     private val connectivityService: ConnectivityService,
     private val powerManagementService: PowerManagementService,
@@ -46,7 +47,6 @@ class FileUploadOperationFactoryImpl(
         context,
         upload.isUseWifiOnly,
         upload.isWhileChargingOnly,
-        true,
         storageManager
     )
 }

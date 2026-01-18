@@ -1,7 +1,7 @@
 /*
  * Nextcloud - Android Client
  *
- * SPDX-FileCopyrightText: 2025 Nextcloud GmbH
+ * SPDX-FileCopyrightText: 2026 Raphael Vieira raphaelecv.projects@gmail.com
  * SPDX-License-Identifier: AGPL-3.0-or-later OR GPL-2.0-only
  */
 
@@ -22,13 +22,9 @@ import com.nextcloud.client.network.Connectivity
 import com.nextcloud.client.network.ConnectivityService
 import com.nextcloud.client.preferences.AppPreferences
 import com.owncloud.android.datamodel.UploadsStorageManager
-import com.owncloud.android.db.OCUpload
-import com.owncloud.android.lib.common.OwnCloudClient
-import com.owncloud.android.lib.common.operations.RemoteOperationResult
 import com.owncloud.android.lib.common.operations.RemoteOperationResult.ResultCode
 import com.owncloud.android.operations.UploadFileOperation
 import com.owncloud.android.utils.theme.ViewThemeUtils
-import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.unmockkAll
@@ -36,6 +32,8 @@ import io.mockk.verify
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Optional
@@ -50,6 +48,7 @@ class FileUploadWorkerTest {
     private val localBroadcastManager: LocalBroadcastManager = mockk(relaxed = true)
     private val backgroundJobManager: BackgroundJobManager = mockk(relaxed = true)
     private val preferences: AppPreferences = mockk(relaxed = true)
+    private val clientFactory: ClientFactory = mockk(relaxed = true)
     private val uploadFileOperationFactory: FileUploadOperationFactory = mockk(relaxed = true)
     private val context: Context = mockk(relaxed = true)
     private val params: WorkerParameters = mockk(relaxed = true)
@@ -59,7 +58,7 @@ class FileUploadWorkerTest {
     @Before
     fun setUp() {
         every { context.getSystemService(Context.NOTIFICATION_SERVICE) } returns systemNotificationManager
-        
+
         val materialSchemes = mockk<MaterialSchemes>(relaxed = true)
         val viewThemeUtils = ViewThemeUtils(materialSchemes, mockk(relaxed = true))
 
@@ -78,6 +77,7 @@ class FileUploadWorkerTest {
             localBroadcastManager,
             backgroundJobManager,
             preferences,
+            clientFactory,
             uploadFileOperationFactory,
             context,
             uploadNotificationManager,
@@ -95,6 +95,50 @@ class FileUploadWorkerTest {
     fun `doWork returns failure when account name is missing`() = runBlocking {
         // GIVEN
         every { params.inputData.getString(FileUploadWorker.ACCOUNT) } returns null
+
+        // WHEN
+        val result = worker.doWork()
+
+        // THEN
+        assertEquals(ListenableWorker.Result.failure(), result)
+    }
+
+    @Test
+    fun `doWork returns failure when upload ids are missing`() = runBlocking {
+        // GIVEN
+        every { params.inputData.getString(FileUploadWorker.ACCOUNT) } returns "account"
+        every { params.inputData.getLongArray(FileUploadWorker.UPLOAD_IDS) } returns null
+
+        // WHEN
+        val result = worker.doWork()
+
+        // THEN
+        assertEquals(ListenableWorker.Result.failure(), result)
+    }
+
+    @Test
+    fun `doWork returns failure when batch index is missing`() = runBlocking {
+        // GIVEN
+        every { params.inputData.getString(FileUploadWorker.ACCOUNT) } returns "account"
+        every { params.inputData.getLongArray(FileUploadWorker.UPLOAD_IDS) } returns longArrayOf(1L)
+        every { params.inputData.getInt(FileUploadWorker.CURRENT_BATCH_INDEX, -1) } returns -1
+
+        // WHEN
+        val result = worker.doWork()
+
+        // THEN
+        assertEquals(ListenableWorker.Result.failure(), result)
+    }
+
+    @Test
+    fun `doWork returns failure when user is not found`() = runBlocking {
+        // GIVEN
+        val accountName = "account"
+        every { params.inputData.getString(FileUploadWorker.ACCOUNT) } returns accountName
+        every { params.inputData.getLongArray(FileUploadWorker.UPLOAD_IDS) } returns longArrayOf(1L)
+        every { params.inputData.getInt(FileUploadWorker.CURRENT_BATCH_INDEX, any()) } returns 0
+        every { params.inputData.getInt(FileUploadWorker.TOTAL_UPLOAD_SIZE, any()) } returns 1
+        every { userAccountManager.getUser(accountName) } returns Optional.empty()
 
         // WHEN
         val result = worker.doWork()
@@ -122,52 +166,62 @@ class FileUploadWorkerTest {
         assertEquals(ListenableWorker.Result.success(), result)
     }
 
+
     @Test
-    fun `doWork skips uploads when globally paused`() = runBlocking {
+    fun `onTransferProgress updates notification manager`() {
         // GIVEN
-        val accountName = "account"
-        val user = mockk<User>(relaxed = true)
-        val upload = mockk<OCUpload>(relaxed = true)
-        every { params.inputData.getString(FileUploadWorker.ACCOUNT) } returns accountName
-        every { params.inputData.getLongArray(FileUploadWorker.UPLOAD_IDS) } returns longArrayOf(1L)
-        every { params.inputData.getInt(FileUploadWorker.CURRENT_BATCH_INDEX, any()) } returns 0
-        every { params.inputData.getInt(FileUploadWorker.TOTAL_UPLOAD_SIZE, any()) } returns 1
-        every { userAccountManager.getUser(accountName) } returns Optional.of(user)
-        every { uploadsStorageManager.getUploadsByIds(any(), accountName) } returns listOf(upload)
-        every { preferences.isGlobalUploadPaused } returns true
+        val fileName = "testFile"
+        val operation = mockk<UploadFileOperation>(relaxed = true)
+        FileUploadWorker.activeUploadFileOperations[fileName] = operation
 
         // WHEN
-        val result = worker.doWork()
+        worker.onTransferProgress(100, 50, 100, fileName)
 
         // THEN
-        assertEquals(ListenableWorker.Result.success(), result)
-        verify(exactly = 0) { uploadFileOperationFactory.create(any(), any(), any()) }
+        verify { uploadNotificationManager.updateUploadProgress(50, operation) }
     }
 
     @Test
-    fun `doWork returns failure when quota is exceeded`() = runBlocking {
+    fun `cancelCurrentUpload cancels matching operations`() {
         // GIVEN
+        val remotePath = "path"
         val accountName = "account"
-        val user = mockk<User>(relaxed = true)
-        val upload = mockk<OCUpload>(relaxed = true)
-        val client = mockk<OwnCloudClient>(relaxed = true)
         val operation = mockk<UploadFileOperation>(relaxed = true)
-        val quotaResult = RemoteOperationResult<Any?>(ResultCode.QUOTA_EXCEEDED)
-
-        every { params.inputData.getString(FileUploadWorker.ACCOUNT) } returns accountName
-        every { params.inputData.getLongArray(FileUploadWorker.UPLOAD_IDS) } returns longArrayOf(1L)
-        every { params.inputData.getInt(FileUploadWorker.CURRENT_BATCH_INDEX, any()) } returns 0
-        every { params.inputData.getInt(FileUploadWorker.TOTAL_UPLOAD_SIZE, any()) } returns 1
-        every { userAccountManager.getUser(accountName) } returns Optional.of(user)
-        every { uploadsStorageManager.getUploadsByIds(any(), accountName) } returns listOf(upload)
-        every { preferences.isGlobalUploadPaused } returns false
-        every { uploadFileOperationFactory.create(upload, user, any()) } returns operation
-        coEvery { operation.execute(client) } returns quotaResult
+        every { operation.remotePath } returns remotePath
+        every { operation.user.accountName } returns accountName
+        FileUploadWorker.activeUploadFileOperations["key"] = operation
 
         // WHEN
-        val result = worker.doWork()
+        var completed = false
+        FileUploadWorker.cancelCurrentUpload(remotePath, accountName) {
+            completed = true
+        }
 
         // THEN
-        assertEquals(ListenableWorker.Result.failure(), result)
+        verify { operation.cancel(ResultCode.USER_CANCELLED) }
+        assertTrue(completed)
+    }
+
+    @Test
+    fun `isUploading returns true when operation exists`() {
+        // GIVEN
+        val remotePath = "path"
+        val accountName = "account"
+        val operation = mockk<UploadFileOperation>(relaxed = true)
+        every { operation.remotePath } returns remotePath
+        every { operation.user.accountName } returns accountName
+        FileUploadWorker.activeUploadFileOperations["key"] = operation
+
+        // WHEN & THEN
+        assertTrue(FileUploadWorker.isUploading(remotePath, accountName))
+        assertFalse(FileUploadWorker.isUploading("other", accountName))
+    }
+
+    @Test
+    fun `getUploadAction returns correct values`() {
+        assertEquals(FileUploadWorker.LOCAL_BEHAVIOUR_FORGET, FileUploadWorker.getUploadAction("LOCAL_BEHAVIOUR_FORGET"))
+        assertEquals(FileUploadWorker.LOCAL_BEHAVIOUR_MOVE, FileUploadWorker.getUploadAction("LOCAL_BEHAVIOUR_MOVE"))
+        assertEquals(FileUploadWorker.LOCAL_BEHAVIOUR_DELETE, FileUploadWorker.getUploadAction("LOCAL_BEHAVIOUR_DELETE"))
+        assertEquals(FileUploadWorker.LOCAL_BEHAVIOUR_FORGET, FileUploadWorker.getUploadAction("UNKNOWN"))
     }
 }
