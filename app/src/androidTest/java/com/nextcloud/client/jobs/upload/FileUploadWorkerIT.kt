@@ -65,7 +65,7 @@ class FileUploadWorkerIT : AbstractOnServerIT() {
         // Verifying both files are uploaded to the server
         val result1 = ReadFileRemoteOperation(remotePath1).execute(client)
         assertTrue("File 1 should be on server", result1.isSuccess)
-        
+
         val result2 = ReadFileRemoteOperation(remotePath2).execute(client)
         assertTrue("File 2 should be on server", result2.isSuccess)
     }
